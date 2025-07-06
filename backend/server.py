@@ -2,7 +2,7 @@
 from flask import Flask, request, jsonify
 from flask_jwt_extended import (
     JWTManager, create_access_token, 
-    jwt_required, get_jwt_identity
+    jwt_required, get_jwt_identity, get_jwt
 )
 from werkzeug.security import check_password_hash
 import os
@@ -51,6 +51,40 @@ def login():
         # Si las credenciales son incorrectas
         return jsonify({"msg": "Usuario o contraseña incorrectos"}), 401
 
+def verify_jwt_and_get_user():
+    """
+    Verifica el token JWT y devuelve una tupla con (código, user_id, user_name).
+    
+    Returns:
+        tuple: (status_code, user_id, user_name)
+        - status_code: 200 si es válido, 401 si no autorizado, 404 si usuario no encontrado
+        - user_id: ID del usuario si es válido, None en otro caso
+        - user_name: Nombre del usuario si es válido, None en otro caso
+    """
+    try:
+        # Obtener la identidad del token
+        current_user_id = get_jwt_identity()
+        
+        # Obtener información del usuario desde la base de datos
+        with db.session_scope() as session:
+            # Convertir el ID a entero si es necesario
+            user_id = int(current_user_id) if isinstance(current_user_id, str) and current_user_id.isdigit() else current_user_id
+            user = session.query(Usuario).get(user_id)
+            
+            if not user:
+                return 404, None, None
+                
+            # Verificar si el usuario está activo (si el modelo tiene un campo 'activo')
+            is_active = getattr(user, 'activo', True)
+            if not is_active:
+                return 401, None, None
+                
+            return 200, user.id, user.nombre
+            
+    except Exception as e:
+        print(f"Error al verificar el token: {str(e)}")
+        return 401, None, None
+
 # Ruta protegida de ejemplo
 @app.route("/api/protegido", methods=["GET"])
 @jwt_required()
@@ -74,41 +108,17 @@ def ruta_protegida():
 @app.route("/api/auth/verify", methods=["POST"])
 @jwt_required()
 def verify_token():
-    # Obtener la identidad del token como string
-    current_user_id = get_jwt_identity()
+    # Usar la función de utilidad para verificar el token y obtener el usuario
+    code, user_id, username = verify_jwt_and_get_user()
+    
+    if code != 200:
+        return jsonify({
+            "valid": False,
+            "message": "Token inválido o usuario no encontrado" if code == 404 else "Usuario no autorizado"
+        }), code
     
     # Obtener información adicional del token
-    from flask_jwt_extended import get_jwt
     token_data = get_jwt()
-    
-    # Obtener información del usuario dentro del contexto de la sesión
-    with db.session_scope() as session:
-        # Convertir el ID a entero si es necesario
-        user_id = int(current_user_id) if isinstance(current_user_id, str) and current_user_id.isdigit() else current_user_id
-        user = session.query(Usuario).get(user_id)
-        
-        if not user:
-            return jsonify({
-                "valid": False,
-                "message": "Usuario no encontrado"
-            }), 404
-            
-        # Verificar si el usuario está activo (si el modelo tiene un campo 'activo')
-        is_active = getattr(user, 'activo', True)  # Por defecto True si no existe el atributo
-        
-        # Obtener los datos del usuario que necesitamos antes de salir del contexto de la sesión
-        user_data = {
-            "id": user.id,
-            "username": user.nombre,
-            "is_authenticated": True,
-            "is_active": bool(is_active)  # Asegurarse de que sea booleano
-        }
-        
-        if not is_active:
-            return jsonify({
-                "valid": False,
-                "message": "Usuario inactivo"
-            }), 401
     
     # Calcular tiempo restante de expiración
     from datetime import datetime, timezone
@@ -120,11 +130,16 @@ def verify_token():
     minutes, seconds = divmod(expires_in, 60)
     expires_in_formatted = f"{minutes}m {seconds}s"
     
-    # Crear la respuesta final fuera del contexto de la sesión
+    # Crear la respuesta final
     return jsonify({
         "valid": True,
         "message": "Token válido",
-        "user": user_data,
+        "user": {
+            "id": user_id,
+            "username": username,
+            "is_authenticated": True,
+            "is_active": True
+        },
         "token_info": {
             "issued_at": datetime.fromtimestamp(token_data['iat'], timezone.utc).isoformat(),
             "expires_at": datetime.fromtimestamp(exp_timestamp, timezone.utc).isoformat(),
