@@ -43,7 +43,13 @@ def login():
     # Verificar si el usuario existe y la contraseña es correcta
         if user:
             # Crear el token de acceso - asegurarse de que el identity sea una cadena
-            access_token = create_access_token(identity=str(user.id))
+            access_token = create_access_token(
+                identity=str(user.id),
+                additional_claims={
+                    "username": user.nombre,
+                    "role": "user"
+                }
+            )
             return jsonify({
                 "access_token": access_token,
                 "user_id": user.id,
@@ -70,31 +76,25 @@ def verify_jwt_and_get_user():
         
         # Obtener información del usuario desde la base de datos
         user_id = int(current_user_id) if isinstance(current_user_id, str) and current_user_id.isdigit() else current_user_id
-        with db.session_scope() as session:
-            user = UsuarioService.get_usuario_por_id(user_id)     
-            
-            if not user:
-                return 404, None, None
-                
-            # Verificar si el usuario está activo (si el modelo tiene un campo 'activo')
-            is_active = getattr(user, 'activo', True)
-            if not is_active:
-                return 401, None, None
-                
-            return 200, user.id, user.nombre
+        claims = get_jwt()
+        username = claims.get("username")
+        role = claims.get("role")
+        
+               
+        return 200, user_id, username, role
     except (NoAuthorizationError, ExpiredSignatureError) as e:
         logging.warning(f"Token no válido o expirado: {str(e)}")
-        return 401, None, None   
+        return 401, None, None, None 
     except Exception as e:
         logging.warning(f"Error al verificar el token: {str(e)}")
-        return 401, None, None
+        return 401, None, None, None
 
 # Ruta protegida de ejemplo
 @app.route("/api/protegido", methods=["GET"])
 @jwt_required()
 def ruta_protegida():
     # Obtener la identidad del token
-    code, user_id, user_name = verify_jwt_and_get_user()
+    code, user_id, user_name, role = verify_jwt_and_get_user()
     
     if code == 200:
         return jsonify({
@@ -110,7 +110,7 @@ def ruta_protegida():
 @jwt_required()
 def verify_token():
     # Usar la función de utilidad para verificar el token y obtener el usuario
-    code, user_id, username = verify_jwt_and_get_user()
+    code, user_id, username, role = verify_jwt_and_get_user()
     
     if code != 200:
         return jsonify({
@@ -138,6 +138,7 @@ def verify_token():
         "user": {
             "id": user_id,
             "username": username,
+            "role": role,
             "is_authenticated": True,
             "is_active": True
         },
@@ -149,6 +150,123 @@ def verify_token():
             "token_type": token_data['type']
         }
     }), 200
+
+# Ruta para obtener los datos del usuario actual
+@app.route("/api/user/me", methods=["GET"])
+@jwt_required()
+def get_current_user():
+    """
+    Endpoint protegido que devuelve los datos del usuario autenticado.
+    Requiere un token JWT válido en el encabezado de autorización.
+    """
+    # Verificar el token y obtener el ID del usuario
+    code, user_id, _, _ = verify_jwt_and_get_user()
+    
+    if code != 200:
+        return jsonify({
+            "error": "No autorizado" if code == 401 else "Usuario no encontrado"
+        }), code
+    
+    # Obtener los datos del usuario desde la base de datos
+    with db.session_scope() as session:
+        user = UsuarioService.get_usuario_por_id(user_id)
+        if not user:
+            return jsonify({"error": "Usuario no encontrado"}), 404
+        
+        # Convertir el objeto Usuario a un diccionario
+        user_data = {
+            "id": user.id,
+            "nombre": user.nombre,
+            "fecha_creado": user.fecha_creado.isoformat() if user.fecha_creado else None,
+            "activo": user.activo,
+            "role": user.role
+        }
+        
+        return jsonify(user_data), 200
+
+@app.route("/api/user/me", methods=["PATCH"])
+@jwt_required()
+def update_current_user():
+    """
+    Endpoint protegido que actualiza los datos del usuario autenticado.
+    Permite actualizar el nombre de usuario y/o la contraseña.
+    Requiere un token JWT válido en el encabezado de autorización.
+    """
+    # Verificar el token y obtener el ID del usuario
+    code, user_id, _, _ = verify_jwt_and_get_user()
+    
+    if code != 200:
+        return jsonify({
+            "error": "No autorizado" if code == 401 else "Usuario no encontrado"
+        }), code
+    
+    # Obtener los datos de la petición
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "No se proporcionaron datos para actualizar"}), 400
+    
+    username = data.get('username')
+    password = data.get('password')
+    
+    # Validar que se proporcione al menos un campo para actualizar
+    if not any([username, password]):
+        return jsonify({
+            "error": "Se debe proporcionar al menos un campo para actualizar (username o password)"
+        }), 400
+    
+    try:
+        with db.session_scope() as session:
+            # Obtener el usuario actual
+            user = UsuarioService.get_usuario_por_id(user_id)
+            if not user:
+                return jsonify({"error": "Usuario no encontrado"}), 404
+            
+            # Actualizar los campos proporcionados
+            update_data = {}
+            if username is not None:
+                # Verificar si el nuevo nombre de usuario ya existe
+                if username != user.nombre:  # Solo verificar si el nombre es diferente
+                    existing_user = UsuarioService.get_usuario_por_nombre(username)
+                    if existing_user and existing_user.id != user.id:
+                        return jsonify({"error": "El nombre de usuario ya está en uso"}), 400
+                update_data['username'] = username
+            
+            if password is not None:
+                if not password.strip():
+                    return jsonify({"error": "La contraseña no puede estar vacía"}), 400
+                update_data['password'] = password
+            
+            # Actualizar el usuario
+            updated_user = UsuarioService.actualizar_usuario(
+                id=user_id,
+                username=update_data.get('username', user.nombre),
+                password=update_data.get('password', None)  # None significa que no se actualiza la contraseña
+            )
+            
+            # Preparar la respuesta
+            response_data = {
+                "id": updated_user.id,
+                "username": updated_user.nombre,
+                "message": "Usuario actualizado correctamente"
+            }
+            
+            # Si se actualizó el nombre de usuario, generar un nuevo token
+            if 'username' in update_data:
+                new_token = create_access_token(
+                    identity=str(updated_user.id),
+                    additional_claims={
+                        "username": updated_user.nombre,
+                        "role": "user"
+                    }
+                )
+                response_data["new_token"] = new_token
+            
+            return jsonify(response_data), 200
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        logging.error(f"Error al actualizar el usuario: {str(e)}")
+        return jsonify({"error": "Error interno del servidor al actualizar el usuario"}), 500
 
 # Ruta de prueba
 @app.route("/")
