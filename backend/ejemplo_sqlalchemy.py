@@ -5,17 +5,29 @@ Este script muestra cómo realizar operaciones comunes con los modelos de Usuari
 """
 from database import db, Usuario, Sala, Mensaje
 from datetime import datetime, timedelta, timezone
+from werkzeug.security import generate_password_hash
 
 def crear_datos_ejemplo():
     """Función para crear datos de ejemplo en la base de datos"""
     with db.session_scope() as session:
-        # Crear algunos usuarios
-        usuario1 = Usuario(nombre="ana_garcia", clave="hash123")
-        usuario2 = Usuario(nombre="carlos_lopez", clave="hash456")
-        usuario3 = Usuario(nombre="luis_martinez", clave="hash789")
+        # Crear algunos usuarios con contraseñas hasheadas
+        usuarios_data = [
+            ("ana_garcia", "segura123"),
+            ("carlos_lopez", "contraseñaSegura456"),
+            ("luis_martinez", "miClave789*")
+        ]
+        
+        usuarios = []
+        for nombre, clave in usuarios_data:
+            clave_hash = generate_password_hash(clave)
+            usuario = Usuario(nombre=nombre, clave=clave_hash)
+            usuarios.append(usuario)
         
         # Agregar usuarios a la sesión
-        session.add_all([usuario1, usuario2, usuario3])
+        session.add_all(usuarios)
+        
+        # Asignar a variables para uso posterior
+        usuario1, usuario2, usuario3 = usuarios
         
         # Crear algunas salas
         sala1 = Sala(nombre="General", privada=False)

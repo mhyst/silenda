@@ -3,6 +3,7 @@ import sqlite3
 from datetime import datetime
 import getpass
 import os
+from werkzeug.security import generate_password_hash, check_password_hash
 
 class SistemaMensajeria:
     def __init__(self, db_name="mensajeria.db"):
@@ -31,15 +32,18 @@ class SistemaMensajeria:
 
     # ===== MÉTODOS PARA USUARIOS =====
     def registrar_usuario(self):
-        """Registra un nuevo usuario en el sistema"""
+        """Registra un nuevo usuario en el sistema con contraseña hasheada"""
         print("\n=== REGISTRO DE USUARIO ===")
         nombre = input("Nombre de usuario: ")
         clave = getpass.getpass("Contraseña: ")
         
+        # Generar hash de la contraseña
+        clave_hash = generate_password_hash(clave)
+        
         try:
             self.cursor.execute(
                 "INSERT INTO usuarios (nombre, clave) VALUES (?, ?)",
-                (nombre, clave)  # En una aplicación real, deberías hashear la contraseña
+                (nombre, clave_hash)
             )
             self.conn.commit()
             print("¡Usuario registrado exitosamente!")
@@ -49,18 +53,19 @@ class SistemaMensajeria:
             return False
 
     def iniciar_sesion(self):
-        """Inicia sesión con un usuario existente"""
+        """Inicia sesión con un usuario existente verificando la contraseña hasheada"""
         print("\n=== INICIO DE SESIÓN ===")
         nombre = input("Nombre de usuario: ")
         clave = getpass.getpass("Contraseña: ")
         
+        # Primero obtenemos el usuario por nombre
         self.cursor.execute(
-            "SELECT id, nombre FROM usuarios WHERE nombre = ? AND clave = ? AND activo = 1",
-            (nombre, clave)
+            "SELECT id, nombre, clave FROM usuarios WHERE nombre = ? AND activo = 1",
+            (nombre,)
         )
         usuario = self.cursor.fetchone()
         
-        if usuario:
+        if usuario and check_password_hash(usuario[2], clave):
             self.usuario_actual = {"id": usuario[0], "nombre": usuario[1]}
             print(f"¡Bienvenido, {usuario[1]}!")
             return True
