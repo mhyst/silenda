@@ -8,6 +8,7 @@ from sqlalchemy.orm import relationship, sessionmaker, scoped_session
 from datetime import datetime
 import os
 from contextlib import contextmanager
+import threading
 
 # Configuración de la base de datos
 Base = declarative_base()
@@ -38,6 +39,15 @@ class Usuario(Base):
     
     def __repr__(self):
         return f"<Usuario(id={self.id}, nombre='{self.nombre}')>"
+        
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'nombre': self.nombre,
+            'fecha_creado': self.fecha_creado,
+            'activo': self.activo
+        }
 
 class Sala(Base):
     """Modelo de sala de chat"""
@@ -54,6 +64,15 @@ class Sala(Base):
     
     def __repr__(self):
         return f"<Sala(id={self.id}, nombre='{self.nombre}', privada={self.privada})>"
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'nombre': self.nombre,
+            'privada': self.privada,
+            'fecha_creado': self.fecha_creado
+        }
+            
 
 class Mensaje(Base):
     """Modelo de mensaje en el chat"""
@@ -73,6 +92,15 @@ class Mensaje(Base):
     
     def __repr__(self):
         return f"<Mensaje(id={self.id}, usuario_id={self.usuario_id}, sala_id={self.sala_id})>"
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'contenido': self.contenido,
+            'fecha_envio': self.fecha_envio,
+            'sala_id': self.sala_id,
+            'usuario_id': self.usuario_id
+        }
 
 class DatabaseManager:
     """Clase para gestionar la conexión y sesiones de la base de datos"""
@@ -85,6 +113,16 @@ class DatabaseManager:
         
         self.engine = create_engine(db_url, echo=False)
         self.Session = scoped_session(sessionmaker(bind=self.engine))
+
+    _local = threading.local()
+
+    @classmethod
+    def set_session(cls, session):
+        cls._local.session = session
+
+    @classmethod
+    def get_session(cls):
+        return getattr(cls._local, 'session', None)
     
     def init_db(self):
         """Crea todas las tablas en la base de datos"""
@@ -95,6 +133,7 @@ class DatabaseManager:
         """Proporciona un contexto transaccional para las operaciones de base de datos"""
         session = self.Session()
         try:
+            DatabaseManager.set_session(session)
             yield session
             session.commit()
         except Exception as e:
@@ -106,56 +145,73 @@ class DatabaseManager:
     # Métodos de utilidad para operaciones comunes
     
     def get_usuario_por_nombre(self, nombre):
+        session = DatabaseManager.get_session()
         """Obtiene un usuario por su nombre de usuario"""
-        with self.session_scope() as session:
-            return session.query(Usuario).filter(Usuario.nombre == nombre).first()
-    
+        return session.query(Usuario).filter(Usuario.nombre == nombre).first()
+
+    def get_usuario_por_id(self, id):
+        session = DatabaseManager.get_session()
+        """Obtiene un usuario por su ID"""
+        return session.query(Usuario).get(id)
+ 
     def crear_usuario(self, nombre, clave_hash):
+        session = DatabaseManager.get_session()
         """Crea un nuevo usuario"""
-        with self.session_scope() as session:
-            usuario = Usuario(nombre=nombre, clave=clave_hash)
-            session.add(usuario)
-            session.flush()  # Para obtener el ID del usuario creado
-            return usuario
+        usuario = Usuario(nombre=nombre, clave=clave_hash)
+        session.add(usuario)
+        session.flush()  # Para obtener el ID del usuario creado
+        return usuario
+    
+    def listar_usuarios(self):
+        session = DatabaseManager.get_session()
+        """Obtiene todos los usuarios"""
+        return session.query(Usuario).all()
+    
+    def actualizar_usuario(self, usuario):
+        """Actualiza un usuario"""
+        session = DatabaseManager.get_session()
+        session.add(usuario)
+        session.flush()
+        return usuario
     
     def get_sala_por_id(self, sala_id):
+        session = DatabaseManager.get_session()
         """Obtiene una sala por su ID"""
-        with self.session_scope() as session:
-            return session.query(Sala).get(sala_id)
+        return session.query(Sala).get(sala_id) 
     
     def crear_sala(self, nombre, privada=True, usuario_creador_id=None):
+        session = DatabaseManager.get_session()
         """Crea una nueva sala y asigna al usuario como administrador"""
-        with self.session_scope() as session:
-            sala = Sala(nombre=nombre, privada=privada)
-            session.add(sala)
-            session.flush()  # Para obtener el ID de la sala
+        sala = Sala(nombre=nombre, privada=privada)
+        session.add(sala)
+        session.flush()  # Para obtener el ID de la sala
             
-            if usuario_creador_id:
-                # Añadir al creador como administrador
-                stmt = usuarios_salas.insert().values(
-                    usuario_id=usuario_creador_id,
-                    sala_id=sala.id,
-                    rol='admin'
-                )
-                session.execute(stmt)
+        if usuario_creador_id:
+            # Añadir al creador como administrador
+            stmt = usuarios_salas.insert().values(
+                usuario_id=usuario_creador_id,
+                sala_id=sala.id,
+                rol='admin'
+            )
+            session.execute(stmt)
             
-            return sala
+        return sala
     
     def agregar_mensaje(self, contenido, sala_id, usuario_id):
+        session = DatabaseManager.get_session()
         """Agrega un nuevo mensaje a una sala"""
-        with self.session_scope() as session:
-            mensaje = Mensaje(
-                contenido=contenido,
-                sala_id=sala_id,
-                usuario_id=usuario_id
+        mensaje = Mensaje(
+            contenido=contenido,
+            sala_id=sala_id,
+            usuario_id=usuario_id
             )
-            session.add(mensaje)
-            return mensaje
+        session.add(mensaje)
+        return mensaje
     
     def get_mensajes_por_sala(self, sala_id, limite=100):
         """Obtiene los mensajes de una sala específica"""
-        with self.session_scope() as session:
-            return (
+        session = DatabaseManager.get_session()
+        return (
                 session.query(Mensaje)
                 .filter(Mensaje.sala_id == sala_id)
                 .order_by(Mensaje.fecha_envio.desc())

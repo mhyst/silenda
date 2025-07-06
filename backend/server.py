@@ -2,14 +2,18 @@
 from flask import Flask, request, jsonify
 from flask_jwt_extended import (
     JWTManager, create_access_token, 
-    jwt_required, get_jwt_identity, get_jwt
+    jwt_required, get_jwt_identity, get_jwt,
 )
+from flask_jwt_extended.exceptions import NoAuthorizationError
+from jwt.exceptions import ExpiredSignatureError
 from werkzeug.security import check_password_hash
 import os
 from datetime import timedelta
+import logging
 
 # Importar el módulo de base de datos
 from database import db, Usuario
+from services.usuarios import UsuarioService
 
 # Configuración de la aplicación
 app = Flask(__name__)
@@ -33,12 +37,11 @@ def login():
     if not username or not password:
         return jsonify({"msg": "Faltan credenciales"}), 400
     
-    # Buscar el usuario en la base de datos
     with db.session_scope() as session:
-        user = session.query(Usuario).filter(Usuario.nombre == username).first()
-        
-        # Verificar si el usuario existe y la contraseña es correcta
-        if user and check_password_hash(user.clave, password):
+        user = UsuarioService.iniciar_sesion(username, password)
+    
+    # Verificar si el usuario existe y la contraseña es correcta
+        if user:
             # Crear el token de acceso - asegurarse de que el identity sea una cadena
             access_token = create_access_token(identity=str(user.id))
             return jsonify({
@@ -47,9 +50,9 @@ def login():
                 "username": user.nombre,
                 "msg": "Inicio de sesión exitoso"
             }), 200
-        
-        # Si las credenciales son incorrectas
-        return jsonify({"msg": "Usuario o contraseña incorrectos"}), 401
+        else:
+            # Si las credenciales son incorrectas
+            return jsonify({"msg": "Usuario o contraseña incorrectos"}), 401
 
 def verify_jwt_and_get_user():
     """
@@ -66,10 +69,9 @@ def verify_jwt_and_get_user():
         current_user_id = get_jwt_identity()
         
         # Obtener información del usuario desde la base de datos
+        user_id = int(current_user_id) if isinstance(current_user_id, str) and current_user_id.isdigit() else current_user_id
         with db.session_scope() as session:
-            # Convertir el ID a entero si es necesario
-            user_id = int(current_user_id) if isinstance(current_user_id, str) and current_user_id.isdigit() else current_user_id
-            user = session.query(Usuario).get(user_id)
+            user = UsuarioService.get_usuario_por_id(user_id)     
             
             if not user:
                 return 404, None, None
@@ -80,9 +82,11 @@ def verify_jwt_and_get_user():
                 return 401, None, None
                 
             return 200, user.id, user.nombre
-            
+    except (NoAuthorizationError, ExpiredSignatureError) as e:
+        logging.warning(f"Token no válido o expirado: {str(e)}")
+        return 401, None, None   
     except Exception as e:
-        print(f"Error al verificar el token: {str(e)}")
+        logging.warning(f"Error al verificar el token: {str(e)}")
         return 401, None, None
 
 # Ruta protegida de ejemplo
@@ -90,19 +94,16 @@ def verify_jwt_and_get_user():
 @jwt_required()
 def ruta_protegida():
     # Obtener la identidad del token
-    current_user_id = get_jwt_identity()
+    code, user_id, user_name = verify_jwt_and_get_user()
     
-    # Aquí podrías obtener más información del usuario desde la base de datos si es necesario
-    with db.session_scope() as session:
-        user = session.query(Usuario).get(current_user_id)
-        if user:
-            return jsonify({
-                "mensaje": f"¡Acceso concedido! Usuario: {user.nombre}",
-                "user_id": user.id,
-                "username": user.nombre
-            }), 200
-    
-    return jsonify({"msg": "Usuario no encontrado"}), 404
+    if code == 200:
+        return jsonify({
+            "message": f"¡Acceso concedido! Usuario: {user_name}",
+            "user_id": user_id,
+            "username": user_name
+        }), code
+
+    return jsonify({"message": "Usuario no encontrado"}), code
 
 # Ruta para verificar un token JWT
 @app.route("/api/auth/verify", methods=["POST"])
