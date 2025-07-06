@@ -6,7 +6,10 @@ import os
 
 class SistemaMensajeria:
     def __init__(self, db_name="mensajeria.db"):
-        self.db_name = db_name
+        # Obtener la ruta absoluta al directorio del script
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        # Construir la ruta completa a la base de datos
+        self.db_name = os.path.join(script_dir, db_name)
         self.conn = None
         self.cursor = None
         self.usuario_actual = None
@@ -300,11 +303,16 @@ class SistemaMensajeria:
 
 
 if __name__ == "__main__":
+    # Obtener la ruta al directorio del script
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    db_path = os.path.join(script_dir, "mensajeria.db")
+    
     # Verificar si la base de datos existe, si no, ejecutar el script de inicialización
-    if not os.path.exists("mensajeria.db"):
+    if not os.path.exists(db_path):
         print("La base de datos no existe. Creando estructura inicial...")
         import subprocess
-        subprocess.run(["python3", "db_init.py"])
+        # Asegurarse de que db_init.py se ejecute desde el directorio correcto
+        subprocess.run(["python3", os.path.join(script_dir, "db_init.py")], cwd=script_dir)
         input("Base de datos creada. Presiona Enter para continuar...")
     
     # Iniciar el sistema
