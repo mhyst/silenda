@@ -8,10 +8,12 @@ PASSWORD="telojuro12"
 # Archivos temporales
 TEMP_LOGIN_RESPONSE=$(mktemp)
 TEMP_VERIFY_RESPONSE=$(mktemp)
+TEMP_USER_PROFILE_RESPONSE=$(mktemp)
+TEMP_USER_SEARCH_RESPONSE=$(mktemp)
 
 # Función de limpieza
 cleanup() {
-    rm -f "$TEMP_LOGIN_RESPONSE" "$TEMP_VERIFY_RESPONSE"
+    rm -f "$TEMP_LOGIN_RESPONSE" "$TEMP_VERIFY_RESPONSE" "$TEMP_USER_PROFILE_RESPONSE" "$TEMP_USER_SEARCH_RESPONSE"
 }
 
 # Registrar limpieza al salir
@@ -84,4 +86,52 @@ if [ "$HTTP_STATUS" -ne 200 ]; then
     exit 1
 fi
 
-echo -e "\n=== Prueba completada exitosamente ==="
+# Obtener el ID del usuario actual para pruebas
+USER_ID=$(jq -r '.user_id' < "$TEMP_LOGIN_RESPONSE" 2>/dev/null)
+
+if [ -z "$USER_ID" ] || [ "$USER_ID" = "null" ]; then
+    echo "Error: No se pudo extraer el ID de usuario de la respuesta de login"
+    exit 1
+fi
+
+echo -e "\n=== Probando obtener perfil de usuario (ID: $USER_ID) ==="
+HTTP_CODE=$(curl -s -k -w "\n%{http_code}" -o "$TEMP_USER_PROFILE_RESPONSE" -X GET \
+    "${API_BASE}/api/user/${USER_ID}" \
+    -H "Authorization: Bearer ${TOKEN}" \
+    -H "Content-Type: application/json"
+)
+HTTP_STATUS=$(echo "$HTTP_CODE" | tail -n1)
+show_response "Perfil de usuario" "$HTTP_STATUS" "$TEMP_USER_PROFILE_RESPONSE"
+
+if [ "$HTTP_STATUS" -ne 200 ]; then
+    echo "Error: Falló al obtener el perfil del usuario"
+    exit 1
+fi
+
+# Extraer el nombre de usuario para la búsqueda
+USERNAME_FOR_SEARCH=$(jq -r '.username' < "$TEMP_LOGIN_RESPONSE" 2>/dev/null)
+SEARCH_QUERY="${USERNAME_FOR_SEARCH:0:3}"  # Usar los primeros 3 caracteres del nombre de usuario
+
+echo -e "\n=== Probando búsqueda de usuarios (query: $SEARCH_QUERY) ==="
+HTTP_CODE=$(curl -s -k -w "\n%{http_code}" -o "$TEMP_USER_SEARCH_RESPONSE" -X GET \
+    "${API_BASE}/api/users/search?query=${SEARCH_QUERY}&limit=5" \
+    -H "Authorization: Bearer ${TOKEN}" \
+    -H "Content-Type: application/json"
+)
+HTTP_STATUS=$(echo "$HTTP_CODE" | tail -n1)
+show_response "Búsqueda de usuarios" "$HTTP_STATUS" "$TEMP_USER_SEARCH_RESPONSE"
+
+if [ "$HTTP_STATUS" -ne 200 ]; then
+    echo "Error: Falló la búsqueda de usuarios"
+    exit 1
+fi
+
+echo -e "\n=== Pruebas completadas exitosamente ===\n"
+
+# Mostrar resumen
+echo "=== Resumen de pruebas ==="
+echo "1. Inicio de sesión: Éxito"
+echo "2. Verificación de token: Éxito"
+echo "3. Obtención de perfil de usuario: $([ "$HTTP_STATUS" -eq 200 ] && echo "Éxito" || echo "Falló")"
+SEARCH_COUNT=$(jq '.results | length' < "$TEMP_USER_SEARCH_RESPONSE" 2>/dev/null || echo "0")
+echo "4. Búsqueda de usuarios: Encontrados $SEARCH_COUNT resultados"

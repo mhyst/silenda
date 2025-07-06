@@ -166,6 +166,28 @@ class DatabaseManager:
         session = DatabaseManager.get_session()
         """Obtiene todos los usuarios"""
         return session.query(Usuario).all()
+        
+    def buscar_usuarios_por_nombre(self, query, limit=10):
+        session = DatabaseManager.get_session()
+        """
+        Busca usuarios cuyo nombre contenga la cadena de búsqueda.
+        
+        Args:
+            query (str): Texto a buscar en los nombres de usuario
+            limit (int): Número máximo de resultados a devolver
+            
+        Returns:
+            List[Usuario]: Lista de usuarios que coinciden con la búsqueda
+        """
+        if not query or len(query.strip()) < 2:
+            return []
+            
+        search = f"%{query}%"
+        return (session.query(Usuario)
+                .filter(Usuario.nombre.ilike(search), Usuario.activo == True)
+                .order_by(Usuario.nombre)
+                .limit(limit)
+                .all())
     
     def actualizar_usuario(self, usuario):
         """Actualiza un usuario"""

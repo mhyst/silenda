@@ -268,14 +268,100 @@ def update_current_user():
         logging.error(f"Error al actualizar el usuario: {str(e)}")
         return jsonify({"error": "Error interno del servidor al actualizar el usuario"}), 500
 
+# Ruta para obtener el perfil público de un usuario
+@app.route("/api/user/<int:user_id>", methods=["GET"])
+@jwt_required()
+def get_user_profile(user_id):
+    """
+    Obtiene el perfil público de un usuario por su ID.
+    Requiere autenticación con JWT.
+    
+    Args:
+        user_id (int): ID del usuario cuyo perfil se desea obtener
+        
+    Returns:
+        JSON con los datos del perfil del usuario o mensaje de error
+    """
+    # Verificar el token JWT
+    code, current_user_id, _, _ = verify_jwt_and_get_user()
+    if code != 200:
+        return jsonify({"msg": "No autorizado"}), 401
+    
+    # Obtener el usuario solicitado
+    with db.session_scope() as session:
+        user = db.get_usuario_por_id(user_id)
+        
+        if not user or not user.activo:
+            return jsonify({"msg": "Usuario no encontrado"}), 404
+            
+        # Devolver solo la información pública del perfil
+        return jsonify({
+            "id": user.id,
+            "nombre": user.nombre,
+            "fecha_creado": user.fecha_creado.isoformat(),
+            "activo": user.activo
+        }), 200
+
+# Ruta para buscar usuarios por nombre
+@app.route("/api/users/search", methods=["GET"])
+@jwt_required()
+def search_users():
+    """
+    Busca usuarios por nombre parcial (case-insensitive).
+    Requiere autenticación con JWT.
+    
+    Query Parameters:
+        query (str): Texto a buscar en los nombres de usuario (mínimo 2 caracteres)
+        limit (int, opcional): Número máximo de resultados (por defecto 10, máximo 50)
+        
+    Returns:
+        JSON con la lista de usuarios que coinciden con la búsqueda
+    """
+    # Verificar el token JWT
+    code, current_user_id, _, _ = verify_jwt_and_get_user()
+    if code != 200:
+        return jsonify({"msg": "No autorizado"}), 401
+    
+    # Obtener parámetros de la consulta
+    query = request.args.get('query', '').strip()
+    try:
+        limit = min(int(request.args.get('limit', 10)), 50)  # Máximo 50 resultados
+    except ValueError:
+        limit = 10
+    
+    # Validar la consulta
+    if len(query) < 2:
+        return jsonify({
+            "msg": "La búsqueda debe tener al menos 2 caracteres",
+            "results": []
+        }), 400
+    
+    # Buscar usuarios
+    with db.session_scope() as session:
+        users = db.buscar_usuarios_por_nombre(query, limit=limit)
+        
+        # Formatear resultados
+        results = [{
+            "id": user.id,
+            "nombre": user.nombre,
+            "fecha_creado": user.fecha_creado.isoformat(),
+            "activo": user.activo
+        } for user in users]
+        
+        return jsonify({
+            "query": query,
+            "count": len(results),
+            "results": results
+        }), 200
+
 # Ruta de prueba
 @app.route("/")
 def index():
-    return "¡API de autenticación funcionando!"
+    return "¡Bienvenido a la API de Silenda!"
 
 @app.route("/hola")
 def hola():
-    return "¡No sé si es hola lo que quieres decir!"
+    return "¡Hola desde Silenda!"
 
 if __name__ == "__main__":
     # Inicializar la base de datos
