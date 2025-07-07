@@ -337,6 +337,86 @@ class DatabaseManager:
                 .limit(limite)
                 .all()
             )
+            
+    def get_mensajes_paginados(self, sala_id, antes_de_id=None, limite=50):
+        """
+        Obtiene mensajes de una sala con paginación hacia atrás.
+        
+        Args:
+            sala_id: ID de la sala
+            antes_de_id: ID del mensaje a partir del cual cargar mensajes más antiguos
+            limite: Número máximo de mensajes a devolver
+            
+        Returns:
+            Lista de mensajes ordenados por fecha de envío (más recientes primero)
+        """
+        session = DatabaseManager.get_session()
+        query = (
+            session.query(Mensaje)
+            .filter(Mensaje.sala_id == sala_id)
+        )
+        
+        if antes_de_id:
+            # Obtener la fecha del mensaje de referencia
+            mensaje_ref = session.query(Mensaje).get(antes_de_id)
+            if mensaje_ref:
+                query = query.filter(Mensaje.fecha_envio < mensaje_ref.fecha_envio)
+        
+        return (
+            query.order_by(Mensaje.fecha_envio.desc())
+            .limit(limite)
+            .all()
+        )
+        
+    def get_mensaje_por_id(self, mensaje_id):
+        """
+        Obtiene un mensaje por su ID.
+        
+        Args:
+            mensaje_id: ID del mensaje a buscar
+            
+        Returns:
+            El mensaje encontrado o None si no existe
+        """
+        session = DatabaseManager.get_session()
+        return session.query(Mensaje).get(mensaje_id)
+        
+    def eliminar_mensaje_por_id(self, mensaje_id):
+        """
+        Elimina un mensaje por su ID.
+        
+        Args:
+            mensaje_id: ID del mensaje a eliminar
+            
+        Returns:
+            bool: True si el mensaje fue eliminado, False si no se encontró
+        """
+        session = DatabaseManager.get_session()
+        mensaje = session.query(Mensaje).get(mensaje_id)
+        if mensaje:
+            session.delete(mensaje)
+            session.commit()
+            return True
+        return False
+        
+    def actualizar_mensaje(self, mensaje_id, nuevo_contenido):
+        """
+        Actualiza el contenido de un mensaje.
+        
+        Args:
+            mensaje_id: ID del mensaje a actualizar
+            nuevo_contenido: Nuevo contenido del mensaje
+            
+        Returns:
+            El mensaje actualizado o None si no se encontró
+        """
+        session = DatabaseManager.get_session()
+        mensaje = session.query(Mensaje).get(mensaje_id)
+        if mensaje:
+            mensaje.contenido = nuevo_contenido
+            session.commit()
+            return mensaje
+        return None
 
 # Crear una instancia global del gestor de base de datos
 db = DatabaseManager()
