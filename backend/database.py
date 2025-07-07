@@ -315,6 +315,13 @@ class DatabaseManager:
     def listar_usuarios_de_sala(self, sala_id):
         session = DatabaseManager.get_session()
         return session.query(Usuario).join(usuarios_salas).filter(usuarios_salas.c.sala_id == sala_id).all()
+
+    def es_miembro(self, sala_id, usuario_id):
+        session = DatabaseManager.get_session()
+        return session.query(usuarios_salas).filter(
+            usuarios_salas.c.sala_id == sala_id,
+            usuarios_salas.c.usuario_id == usuario_id
+        ).first() is not None
     
     def agregar_mensaje(self, contenido, sala_id, usuario_id):
         session = DatabaseManager.get_session()

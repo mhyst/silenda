@@ -96,35 +96,6 @@ class SalaService:
         return db.listar_salas(usuario_id, solo_publicas)
     
     @staticmethod
-    def agregar_mensaje(contenido, sala_id, usuario_id):
-        """
-        Agrega un mensaje a una sala.
-        
-        Args:
-            contenido: Contenido del mensaje
-            sala_id: ID de la sala
-            usuario_id: ID del usuario que envía el mensaje
-            
-        Returns:
-            El mensaje creado
-        """
-        return db.agregar_mensaje(contenido, sala_id, usuario_id)
-    
-    @staticmethod
-    def obtener_mensajes_por_sala(sala_id, limite=100):
-        """
-        Obtiene los mensajes de una sala.
-        
-        Args:
-            sala_id: ID de la sala
-            limite: Número máximo de mensajes a devolver (por defecto 100)
-            
-        Returns:
-            Lista de mensajes ordenados por fecha de envío (más recientes primero)
-        """
-        return db.get_mensajes_por_sala(sala_id, limite)
-    
-    @staticmethod
     def agregar_usuario_a_sala(usuario_id, sala_id, rol='miembro'):
         """
         Agrega un usuario a una sala.

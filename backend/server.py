@@ -14,6 +14,8 @@ import logging
 # Importar el módulo de base de datos
 from database import db, Usuario
 from services.usuarios import UsuarioService
+from services.mensajes import MensajesService
+from services.salas import SalaService
 
 # Configuración de la aplicación
 app = Flask(__name__)
@@ -362,6 +364,200 @@ def index():
 @app.route("/hola")
 def hola():
     return "¡Hola desde Silenda!"
+
+# Endpoints de mensajes
+
+@app.route("/api/rooms/<int:room_id>/messages", methods=["GET"])
+@jwt_required()
+def get_room_messages(room_id):
+    """
+    Obtiene mensajes de una sala con paginación hacia atrás.
+    
+    Query Parameters:
+        before: ID del mensaje a partir del cual cargar mensajes más antiguos (opcional)
+        limit: Número máximo de mensajes a devolver (por defecto 50, máximo 100)
+        
+    Returns:
+        Lista de mensajes ordenados por fecha de envío (más recientes primero)
+    """
+    try:
+        # Obtener parámetros de la consulta
+        before_id = request.args.get('before', type=int)
+        limit = min(100, request.args.get('limit', 50, type=int))
+        
+        # Obtener mensajes
+        mensajes = MensajesService.obtener_mensajes_paginados(
+            sala_id=room_id,
+            antes_de_id=before_id,
+            limite=limit
+        )
+        
+        # Convertir mensajes a diccionarios
+        mensajes_dict = [{
+            'id': msg.id,
+            'contenido': msg.contenido,
+            'fecha_envio': msg.fecha_envio.isoformat(),
+            'usuario_id': msg.usuario_id,
+            'sala_id': msg.sala_id
+        } for msg in mensajes]
+        
+        return jsonify(mensajes_dict), 200
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+@app.route("/api/rooms/<int:room_id>/messages", methods=["POST"])
+@jwt_required()
+def send_message(room_id):
+    """
+    Envía un mensaje a una sala.
+    
+    Body (JSON):
+        contenido: Contenido del mensaje (requerido)
+        
+    Returns:
+        El mensaje creado
+    """
+    try:
+        # Obtener datos de la petición
+        data = request.get_json()
+        contenido = data.get('contenido')
+        
+        if not contenido:
+            return jsonify({"error": "El contenido del mensaje es requerido"}), 400
+        
+        # Obtener el ID del usuario autenticado
+        user_id = get_jwt_identity()
+        
+        try:
+            # Crear el mensaje
+            mensaje = MensajesService.agregar_mensaje(
+                contenido=contenido,
+                sala_id=room_id,
+                usuario_id=user_id
+            )
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+        
+        # Convertir el mensaje a diccionario para la respuesta
+        mensaje_dict = {
+            'id': mensaje.id,
+            'contenido': mensaje.contenido,
+            'fecha_envio': mensaje.fecha_envio.isoformat(),
+            'usuario_id': mensaje.usuario_id,
+            'sala_id': mensaje.sala_id
+        }
+        
+        return jsonify(mensaje_dict), 201
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+@app.route("/api/messages/<int:message_id>", methods=["GET"])
+@jwt_required()
+def get_message(message_id):
+    """
+    Obtiene un mensaje específico por su ID.
+
+    Este método no tiene ninguna protección por lo que en teoría cualquier usuario podrá obtener cualquier mensaje.
+    permite a cualquiera con un token válido recopilar cualquier
+    mensaje del sistema. Esto habría que corregirlo.
+    
+    Returns:
+        El mensaje solicitado
+    """
+    try:
+        mensaje = MensajesService.obtener_mensaje_por_id(message_id)
+        
+        if not mensaje:
+            return jsonify({"error": "Mensaje no encontrado"}), 404
+            
+        mensaje_dict = {
+            'id': mensaje.id,
+            'contenido': mensaje.contenido,
+            'fecha_envio': mensaje.fecha_envio.isoformat(),
+            'usuario_id': mensaje.usuario_id,
+            'sala_id': mensaje.sala_id
+        }
+        
+        return jsonify(mensaje_dict), 200
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+@app.route("/api/messages/<int:message_id>", methods=["PATCH"])
+@jwt_required()
+def edit_message(message_id):
+    """
+    Edita un mensaje existente.
+    
+    Body (JSON):
+        contenido: Nuevo contenido del mensaje (requerido)
+        
+    Returns:
+        El mensaje actualizado
+    """
+    try:
+        # Obtener datos de la petición
+        data = request.get_json()
+        nuevo_contenido = data.get('contenido')
+        
+        if not nuevo_contenido:
+            return jsonify({"error": "El contenido del mensaje es requerido"}), 400
+        
+        # Obtener el ID del usuario autenticado
+        user_id = get_jwt_identity()
+        
+        # Intentar editar el mensaje
+        mensaje_actualizado = MensajesService.editar_mensaje(
+            mensaje_id=message_id,
+            usuario_id=user_id,
+            nuevo_contenido=nuevo_contenido
+        )
+        
+        if not mensaje_actualizado:
+            return jsonify({"error": "No tienes permiso para editar este mensaje"}), 403
+            
+        # Convertir el mensaje a diccionario para la respuesta
+        mensaje_dict = {
+            'id': mensaje_actualizado.id,
+            'contenido': mensaje_actualizado.contenido,
+            'fecha_envio': mensaje_actualizado.fecha_envio.isoformat(),
+            'usuario_id': mensaje_actualizado.usuario_id,
+            'sala_id': mensaje_actualizado.sala_id
+        }
+        
+        return jsonify(mensaje_dict), 200
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+@app.route("/api/messages/<int:message_id>", methods=["DELETE"])
+@jwt_required()
+def delete_message(message_id):
+    """
+    Elimina un mensaje.
+    
+    Returns:
+        Mensaje de éxito o error
+    """
+    try:
+        # Obtener el ID del usuario autenticado
+        user_id = get_jwt_identity()
+        
+        # Intentar eliminar el mensaje
+        eliminado = MensajesService.eliminar_mensaje(
+            mensaje_id=message_id,
+            usuario_id=user_id
+        )
+        
+        if not eliminado:
+            return jsonify({"error": "No tienes permiso para eliminar este mensaje o el mensaje no existe"}), 403
+            
+        return jsonify({"mensaje": "Mensaje eliminado correctamente"}), 200
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
 
 if __name__ == "__main__":
     # Inicializar la base de datos

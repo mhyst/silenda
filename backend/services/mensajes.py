@@ -28,7 +28,16 @@ class MensajesService:
             
         Returns:
             El mensaje creado
+            
+        Raises:
+            ValueError: Si el usuario no es miembro de la sala
         """
+        # Verificar si el usuario es miembro de la sala
+        es_miembro = db.es_miembro(sala_id, usuario_id)
+        
+        if not es_miembro:
+            raise ValueError("No puedes enviar mensajes a una sala de la que no eres miembro")
+            
         return db.agregar_mensaje(contenido, sala_id, usuario_id)
     
     @staticmethod
