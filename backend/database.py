@@ -199,7 +199,21 @@ class DatabaseManager:
     def get_sala_por_id(self, sala_id):
         session = DatabaseManager.get_session()
         """Obtiene una sala por su ID"""
-        return session.query(Sala).get(sala_id) 
+        return session.query(Sala).get(sala_id)
+
+    def listar_salas(self, usuario_id=None, solo_publicas=False):
+        session = DatabaseManager.get_session()
+        """Lista las salas disponibles"""
+        query = session.query(Sala)
+        
+        if usuario_id:
+            # Filtrar salas a las que pertenece el usuario
+            query = query.join(Sala.miembros).filter(Usuario.id == usuario_id)
+        elif solo_publicas:
+            # Filtrar solo salas públicas
+            query = query.filter(Sala.privada == False)
+        
+        return query.all()
     
     def crear_sala(self, nombre, privada=True, usuario_creador_id=None):
         session = DatabaseManager.get_session()
@@ -218,6 +232,89 @@ class DatabaseManager:
             session.execute(stmt)
             
         return sala
+    
+    def actualizar_sala(self, sala_id, nombre=None, privada=None):
+        session = DatabaseManager.get_session()
+        sala = session.query(Sala).get(sala_id)
+        if not sala:
+            raise ValueError("Sala no encontrada")
+        
+        if nombre:
+            sala.nombre = nombre
+        if privada:
+            sala.privada = privada
+        
+        session.add(sala)
+        session.flush()
+        return sala
+    
+    def eliminar_sala(self, sala_id):
+        session = DatabaseManager.get_session()
+        sala = session.query(Sala).get(sala_id)
+        if not sala:
+            raise ValueError("Sala no encontrada")
+        session.delete(sala)
+        session.flush()
+        return sala
+    
+    def es_admin(self, sala_id, usuario_id):
+        session = DatabaseManager.get_session()
+        return session.query(usuarios_salas).filter(
+            usuarios_salas.c.sala_id == sala_id,
+            usuarios_salas.c.usuario_id == usuario_id,
+            usuarios_salas.c.rol == 'admin'
+        ).first() is not None
+
+    def agregar_usuario_a_sala(self, usuario_id, sala_id, rol='miembro'):
+        """
+        Agrega un usuario a una sala.
+        
+        Args:
+            usuario_id: ID del usuario a agregar
+            sala_id: ID de la sala a la que se agregará el usuario
+            rol: Rol del usuario en la sala (por defecto 'miembro')
+            
+        Returns:
+            True si se agregó correctamente, False si ya era miembro
+        """
+        sala = self.get_sala_por_id(sala_id)
+        usuario = self.get_usuario_por_id(usuario_id)
+        
+        if not sala or not usuario:
+            raise ValueError("Sala o usuario no encontrado")
+        
+        # Verificar si el usuario ya es miembro
+        if usuario in sala.miembros:
+            return False
+        
+        session = DatabaseManager.get_session()
+        
+        # Agregar el usuario a la sala con el rol especificado
+        stmt = usuarios_salas.insert().values(
+            usuario_id=usuario_id,
+            sala_id=sala_id,
+            rol=rol
+        )
+        session.execute(stmt)
+        session.commit()
+        return True
+    
+    def eliminar_usuario_de_sala(self, usuario_id, sala_id):
+        session = DatabaseManager.get_session()
+        """Elimina un usuario de una sala"""
+        stmt = usuarios_salas.delete().where(
+            and_(
+                usuarios_salas.c.usuario_id == usuario_id,
+                usuarios_salas.c.sala_id == sala_id
+            )
+        )
+        session.execute(stmt)
+        session.commit()
+        return result.rowcount > 0
+
+    def listar_usuarios_de_sala(self, sala_id):
+        session = DatabaseManager.get_session()
+        return session.query(Usuario).join(usuarios_salas).filter(usuarios_salas.c.sala_id == sala_id).all()
     
     def agregar_mensaje(self, contenido, sala_id, usuario_id):
         session = DatabaseManager.get_session()
