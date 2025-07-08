@@ -33,6 +33,10 @@ class SalaService:
     @staticmethod
     def es_admin(sala_id, usuario_id):
         return db.es_admin(sala_id, usuario_id)
+
+    @staticmethod
+    def es_miembro(sala_id, usuario_id):
+        return db.es_miembro(sala_id, usuario_id)
     
     @staticmethod
     def actualizar_sala(sala_id, usuario_id, nombre=None, privada=None):

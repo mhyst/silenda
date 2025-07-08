@@ -91,13 +91,13 @@ class MensajesService:
             
         # Verificar si el usuario es el autor del mensaje
         if mensaje.usuario_id == usuario_id:
-            return db.eliminar_mensaje_por_id(mensaje_id)
+            return db.eliminar_mensaje_por_id(mensaje_id), mensaje.sala_id
             
         # Si no es el autor, verificar si es administrador de la sala
         if SalaService.es_admin(mensaje.sala_id, usuario_id):
-            return db.eliminar_mensaje_por_id(mensaje_id)
+            return db.eliminar_mensaje_por_id(mensaje_id), mensaje.sala_id
             
-        return False
+        return False, None
         
     @staticmethod
     def editar_mensaje(mensaje_id, usuario_id, nuevo_contenido):
