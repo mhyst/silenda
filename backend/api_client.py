@@ -164,48 +164,120 @@ class APIClient:
 
     def _make_request(self, method, endpoint, data=None, params=None, headers=None):
         """
-        Realiza una petición HTTP a la API.
+        Realiza una petición HTTPS a la API usando curl.
         
-        Args:
-            method (str): Método HTTP (get, post, put, delete)
-            endpoint (str): Ruta del endpoint (ej: '/api/auth/login')
-            data (dict, optional): Datos a enviar en el cuerpo de la petición
-            params (dict, optional): Parámetros de consulta
-            
         Returns:
-            tuple: (status_code, response_data)
+            tuple: (status_code, response_data, response_headers)
         """
-        url = urljoin(self.base_url, endpoint)
-        headers = headers or {}
+        import subprocess
+        import json
+        from urllib.parse import urlparse, parse_qs, urlencode
         
-        # Añadir el token de autenticación si está disponible
+        # Construir la URL completa
+        url = urljoin(self.base_url, endpoint)
+        
+        # Forzar HTTPS
+        if not url.startswith('https://'):
+            return 0, {'error': 'Solo se permiten conexiones HTTPS'}, {}
+        
+        # Configurar el comando curl
+        cmd = ['curl', '-s', '-i', '--tlsv1.2', '--tls-max', '1.2']
+        
+        # Añadir método HTTP
+        cmd.extend(['-X', method.upper()])
+        
+        # Añadir headers
+        headers = headers or {}
         if self.token and 'Authorization' not in headers:
             headers['Authorization'] = f'Bearer {self.token}'
         
+        # Asegurar que tenemos Content-Type para POST/PUT
+        if method.lower() in ['post', 'put'] and 'Content-Type' not in headers:
+            headers['Content-Type'] = 'application/json'
+        
+        for key, value in headers.items():
+            cmd.extend(['-H', f'{key}: {value}'])
+            
+        # Añadir opción para incluir los headers en la salida
+        cmd.extend(['-D', '-'])
+        
+        # Añadir parámetros de consulta
+        if params:
+            from urllib.parse import urlencode
+            url = f"{url}?{urlencode(params)}"
+        
+        # Añadir datos del cuerpo si los hay
+        if data and method.lower() in ['post', 'put']:
+            if isinstance(data, dict):
+                data = json.dumps(data, ensure_ascii=False)
+            cmd.extend(['-d', data])
+        
+        # Añadir la URL
+        cmd.append(url)
+        
+        # Añadir opciones de depuración
+        debug_cmd = ' '.join(cmd)
+        
         try:
-            if method.lower() == 'get':
-                response = requests.get(url, params=params, headers=headers, verify=self.verify_ssl)
-            elif method.lower() == 'post':
-                headers['Content-Type'] = 'application/json'
-                response = requests.post(url, json=data, headers=headers, verify=self.verify_ssl)
-            elif method.lower() == 'put':
-                headers['Content-Type'] = 'application/json'
-                response = requests.put(url, json=data, headers=headers, verify=self.verify_ssl)
-            elif method.lower() == 'delete':
-                response = requests.delete(url, headers=headers, verify=self.verify_ssl)
-            else:
-                return 400, {'error': 'Método HTTP no soportado'}
+            # Ejecutar el comando
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=15
+            )
             
-            # Intentar parsear la respuesta como JSON
-            try:
-                response_data = response.json()
-            except ValueError:
-                response_data = response.text
+            # Si hay error en la ejecución
+            if result.returncode != 0:
+                error_msg = f"Error en curl (código {result.returncode}):\n"
+                error_msg += f"Comando: {debug_cmd}\n"
+                error_msg += f"Error: {result.stderr}"
+                return 0, {'error': error_msg}, {}
+            
+            # Procesar la salida
+            response = result.stdout
+            if not response:
+                return 0, {'error': 'El servidor no devolvió ninguna respuesta'}, {}
+            
+            # Separar headers y cuerpo
+            header_data, _, body = response.partition('\r\n\r\n')
+            headers_list = header_data.splitlines()
+            
+            # Procesar los headers de respuesta
+            response_headers = {}
+            status_code = 0
+            
+            if headers_list:
+                # La primera línea es el status HTTP
+                try:
+                    # Algo como: HTTP/1.1 200 OK
+                    http_status = headers_list[0].split()
+                    if len(http_status) > 1:
+                        status_code = int(http_status[1])
+                except (IndexError, ValueError):
+                    pass
                 
-            return response.status_code, response_data
+                # Procesar el resto de headers
+                for header in headers_list[1:]:
+                    if ': ' in header:
+                        key, value = header.split(': ', 1)
+                        response_headers[key] = value
             
-        except RequestException as e:
-            return 0, {'error': f'Error de conexión: {str(e)}'}
+            # Procesar el cuerpo
+            response_data = body.strip()
+            if body.strip():
+                try:
+                    response_data = json.loads(body)
+                except json.JSONDecodeError:
+                    pass
+            
+            return status_code, response_data, response_headers
+            
+        except subprocess.TimeoutExpired:
+            return 0, {'error': f'Tiempo de espera agotado al conectar con {url}'}
+        except Exception as e:
+            return 0, {'error': f'Error inesperado: {str(e)}'}
+
     
     def _signal_handler(self, signum, frame):
         """Manejador de señales para una salida limpia."""
@@ -339,23 +411,56 @@ class APIClient:
             return False
     
     def login(self, username, password):
-        """Inicia sesión en la API."""
-        endpoint = '/api/auth/login'
-        data = {'username': username, 'password': password}
+        """
+        Inicia sesión en la API.
         
-        status_code, response = self._make_request('post', endpoint, data=data)
-        
-        if status_code == 200:
-            self.token = response.get('access_token')
-            self.user_id = response.get('user_id')
-            self.username = response.get('username')
-            print(f"\n[+] Sesión iniciada como {self.username} (ID: {self.user_id}")
+        Args:
+            username (str): Nombre de usuario
+            password (str): Contraseña
             
-            # Conectar WebSocket después de iniciar sesión
-            if input("¿Desea habilitar notificaciones en tiempo real? (s/n): ").lower() == 's':
-                self.connect_websocket()
+        Returns:
+            tuple: (status_code, response_data)
+        """
+        data = {
+            'username': username,
+            'password': password
+        }
         
-        return status_code, response
+        status_code, response, headers = self._make_request('post', '/api/auth/login', data=data)
+        
+        # Si la respuesta es un string, intentar convertirla a JSON
+        response_data = response
+        if isinstance(response, str):
+            try:
+                import json
+                response_data = json.loads(response)
+            except json.JSONDecodeError:
+                # Si no es JSON, mantener el string como está
+                response_data = {'message': response}
+        
+        # Si la autenticación fue exitosa, guardar el token
+        if status_code == 200:
+            # Intentar obtener el token del cuerpo de la respuesta
+            if isinstance(response_data, dict):
+                self.token = response_data.get('access_token')
+                self.user_id = response_data.get('user_id')
+                self.username = response_data.get('username')
+            
+            # Si no hay token en el cuerpo, buscar en los headers
+            if not self.token and headers and 'Authorization' in headers:
+                auth_header = headers['Authorization']
+                if auth_header.startswith('Bearer '):
+                    self.token = auth_header[7:].strip()
+            
+            # Si aún no hay token, intentar obtener el nombre de usuario del endpoint de perfil
+            if not self.username and self.token:
+                user_status, user_data, _ = self._make_request('get', '/api/auth/me')
+                if user_status == 200 and isinstance(user_data, dict):
+                    self.user_id = user_data.get('id', self.user_id)
+                    self.username = user_data.get('username', self.username)
+        
+        # Devolver la respuesta procesada
+        return status_code, response_data
     
     def verify_token(self):
         """Verifica si el token actual es válido."""
@@ -553,8 +658,8 @@ def auth_menu(api_client):
             status_code, response = api_client.login(username, password)
             print_response(status_code, response)
             
-            if status_code != 200:
-                input("\nPresione Enter para continuar...")
+            # Add pause for both success and error cases
+            input("\nPresione Enter para continuar...")
         elif choice == '2':
             if not api_client.token:
                 print("\nError: No hay token de autenticación")
