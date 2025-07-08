@@ -10,6 +10,7 @@ from werkzeug.security import check_password_hash
 import os
 from datetime import timedelta
 import logging
+from flask_socketio import SocketIO
 
 # Importar el módulo de base de datos
 from database import db, Usuario
@@ -897,6 +898,7 @@ if __name__ == "__main__":
     
     # Ejecutar la aplicación
     socketio.run(
+        app,
         ssl_context=("localhost+3.pem", "localhost+3-key.pem"),
         host="0.0.0.0",
         port=11443,
