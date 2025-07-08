@@ -11,6 +11,7 @@ import os
 from datetime import timedelta
 import logging
 from flask_socketio import SocketIO
+from flask_cors import CORS
 
 # Importar el módulo de base de datos
 from database import db, Usuario
@@ -20,6 +21,9 @@ from services.salas import SalaService
 
 # Configuración de la aplicación
 app = Flask(__name__)
+#CORS(app, origins=["https://192.168.1.10:11443"])
+#CORS(app, origins=["https://192.168.1.64"], supports_credentials=True)
+CORS(app, origins="*")
 
 # Inicializa SocketIO con la app Flask
 socketio = SocketIO(app, cors_allowed_origins="*")
@@ -184,8 +188,7 @@ def get_current_user():
             "id": user.id,
             "nombre": user.nombre,
             "fecha_creado": user.fecha_creado.isoformat() if user.fecha_creado else None,
-            "activo": user.activo,
-            "role": user.role
+            "activo": user.activo
         }
         
         return jsonify(user_data), 200
@@ -386,10 +389,10 @@ def get_rooms():
     
     # Obtener las salas a las que pertenece el usuario
     with db.session_scope() as session:
-        salas = db.listar_salas(usuario_id=user_id)
+        salas = SalaService.listar_salas(usuario_id=user_id)
 
         for sala in salas:
-            socketio.join_room(f"sala_{sala.id}")
+            socketio.emit("join_room", {"sala_id": sala.id}, to=f"user_{user_id}")
     
         # Convertir las salas a diccionario para la respuesta
         salas_dict = [{
@@ -416,27 +419,27 @@ def get_room(room_id):
         Información detallada de la sala
     """
     # Verificar que el usuario está autenticado
-    status_code, user_id, _ = verify_jwt_and_get_user()
+    status_code, user_id, _, _  = verify_jwt_and_get_user()
     if status_code != 200:
         return jsonify({"msg": "No autorizado"}), 401
         
     # Obtener la sala
-    sala = SalaService.obtener_sala_por_id(room_id)
-    if not sala:
-        return jsonify({"msg": "Sala no encontrada"}), 404
-        
-    # Verificar que el usuario es miembro de la sala si es privada
-    if sala.privada and not SalaService.es_miembro(room_id, user_id):
-        return jsonify({"msg": "No tienes permiso para ver esta sala"}), 403
-        
-    # Obtener información de la sala
-    return jsonify({
-        "id": sala.id,
-        "nombre": sala.nombre,
-        "tipo": "privada" if sala.privada else "pública",
-        "fecha_creacion": sala.fecha_creado.isoformat(),
-        "creador_id": sala.usuario_creador_id
-    }), 200
+    with db.session_scope() as session:
+        sala = SalaService.obtener_sala_por_id(room_id)
+        if not sala:
+            return jsonify({"msg": "Sala no encontrada"}), 404
+            
+        # Verificar que el usuario es miembro de la sala si es privada
+        if sala.privada and not SalaService.es_miembro(room_id, user_id):
+            return jsonify({"msg": "No tienes permiso para ver esta sala"}), 403
+            
+        # Obtener información de la sala
+        return jsonify({
+            "id": sala.id,
+            "nombre": sala.nombre,
+            "tipo": "privada" if sala.privada else "pública",
+            "fecha_creacion": sala.fecha_creado.isoformat()
+        }), 200
 
 @app.route("/api/rooms", methods=["POST"])
 @jwt_required()
@@ -452,7 +455,7 @@ def create_room():
         La sala creada
     """
     # Verificar que el usuario está autenticado
-    status_code, user_id, _ = verify_jwt_and_get_user()
+    status_code, user_id, _, _ = verify_jwt_and_get_user()
     if status_code != 200:
         return jsonify({"msg": "No autorizado"}), 401
         
@@ -464,21 +467,22 @@ def create_room():
     # Crear la sala
     try:
         privada = data.get('privada', True)
-        sala = SalaService.crear_sala(
-            nombre=data['nombre'],
-            privada=privada,
-            usuario_creador_id=user_id
-        )
+        with db.session_scope() as session:
+            sala = SalaService.crear_sala(
+                nombre=data['nombre'],
+                privada=privada,
+                usuario_creador_id=user_id
+            )
         
-        # Añadir al creador como miembro de la sala
-        SalaService.agregar_usuario_a_sala(user_id, sala.id, rol='admin')
-        
-        return jsonify({
-            "id": sala.id,
-            "nombre": sala.nombre,
-            "tipo": "privada" if sala.privada else "pública",
-            "fecha_creacion": sala.fecha_creado.isoformat()
-        }), 201
+            # Añadir al creador como miembro de la sala
+            SalaService.agregar_usuario_a_sala(user_id, sala.id, rol='admin')
+            
+            return jsonify({
+                "id": sala.id,
+                "nombre": sala.nombre,
+                "tipo": "privada" if sala.privada else "pública",
+                "fecha_creacion": sala.fecha_creado.isoformat()
+            }), 201
         
     except Exception as e:
         return jsonify({"msg": f"Error al crear la sala: {str(e)}"}), 500
@@ -500,22 +504,23 @@ def join_room(room_id):
     if status_code != 200:
         return jsonify({"msg": "No autorizado"}), 401
         
+    with db.session_scope() as session:
     # Verificar que la sala existe
-    sala = SalaService.obtener_sala_por_id(room_id)
-    if not sala:
-        return jsonify({"msg": "Sala no encontrada"}), 404
+        sala = SalaService.obtener_sala_por_id(room_id)
+        if not sala:
+            return jsonify({"msg": "Sala no encontrada"}), 404
         
-    # Verificar si el usuario ya es miembro
-    if SalaService.es_miembro(room_id, user_id):
-        return jsonify({"msg": "Ya eres miembro de esta sala"}), 400
+        # Verificar si el usuario ya es miembro
+        if SalaService.es_miembro(room_id, user_id):
+            return jsonify({"msg": "Ya eres miembro de esta sala"}), 400
         
-    try:
-        # Unir al usuario a la sala
-        SalaService.agregar_usuario_a_sala(room_id, user_id)
-        socketio.join_room(f"sala_{room_id}")
-        return jsonify({"msg": "Te has unido a la sala correctamente"}), 200
-    except Exception as e:
-        return jsonify({"msg": f"Error al unirse a la sala: {str(e)}"}), 500
+        try:
+            # Unir al usuario a la sala
+            SalaService.agregar_usuario_a_sala(room_id, user_id)
+            socketio.emit("join_room", {"sala_id": room_id}, to=f"user_{user_id}")
+            return jsonify({"msg": "Te has unido a la sala correctamente"}), 200
+        except Exception as e:
+            return jsonify({"msg": f"Error al unirse a la sala: {str(e)}"}), 500
 
 @app.route("/api/rooms/<int:room_id>/leave", methods=["POST"])
 @jwt_required()
@@ -633,7 +638,7 @@ def delete_room(room_id):
         # Eliminar la sala
         SalaService.eliminar_sala(room_id)
         socketio.leave_room(f"sala_{room_id}")
-        socketio.emit("sala_eliminada", {"room_id": room_id})
+        socketio.emit("leave_room", {"room_id": room_id})
         return jsonify({"msg": "Sala eliminada correctamente"}), 200
     except Exception as e:
         return jsonify({"msg": f"Error al eliminar la sala: {str(e)}"}), 500
@@ -740,28 +745,29 @@ def send_message(room_id):
         # Obtener el ID del usuario autenticado
         user_id = get_jwt_identity()
         
-        try:
-            # Crear el mensaje
-            mensaje = MensajesService.agregar_mensaje(
-                contenido=contenido,
-                sala_id=room_id,
-                usuario_id=user_id
-            )
-        except ValueError as e:
-            return jsonify({"error": str(e)}), 400
-        
-        # Convertir el mensaje a diccionario para la respuesta
-        mensaje_dict = {
-            'id': mensaje.id,
-            'contenido': mensaje.contenido,
-            'fecha_envio': mensaje.fecha_envio.isoformat(),
-            'usuario_id': mensaje.usuario_id,
-            'sala_id': mensaje.sala_id
-        }
+        with db.session_scope() as session:
+            try:
+                # Crear el mensaje
+                mensaje = MensajesService.agregar_mensaje(
+                    contenido=contenido,
+                    sala_id=room_id,
+                    usuario_id=user_id
+                )
+            except ValueError as e:
+                return jsonify({"error": str(e)}), 400
+            
+            # Convertir el mensaje a diccionario para la respuesta
+            mensaje_dict = {
+                'id': mensaje.id,
+                'contenido': mensaje.contenido,
+                'fecha_envio': mensaje.fecha_envio.isoformat(),
+                'usuario_id': mensaje.usuario_id,
+                'sala_id': mensaje.sala_id
+            }
 
-        socketio.emit("nuevo_mensaje", mensaje_dict, room=f"sala_{room_id}")
-        
-        return jsonify(mensaje_dict), 201
+            socketio.emit("nuevo_mensaje", mensaje_dict, room=f"sala_{room_id}")
+            
+            return jsonify(mensaje_dict), 201
         
     except Exception as e:
         return jsonify({"error": str(e)}), 400
@@ -821,27 +827,28 @@ def edit_message(message_id):
         # Obtener el ID del usuario autenticado
         user_id = get_jwt_identity()
         
-        # Intentar editar el mensaje
-        mensaje_actualizado = MensajesService.editar_mensaje(
-            mensaje_id=message_id,
-            usuario_id=user_id,
-            nuevo_contenido=nuevo_contenido
-        )
-        
-        if not mensaje_actualizado:
-            return jsonify({"error": "No tienes permiso para editar este mensaje"}), 403
+        with db.session_scope() as session:
+            # Intentar editar el mensaje
+            mensaje_actualizado = MensajesService.editar_mensaje(
+                mensaje_id=message_id,
+                usuario_id=user_id,
+                nuevo_contenido=nuevo_contenido
+            )
             
-        # Convertir el mensaje a diccionario para la respuesta
-        mensaje_dict = {
-            'id': mensaje_actualizado.id,
-            'contenido': mensaje_actualizado.contenido,
-            'fecha_envio': mensaje_actualizado.fecha_envio.isoformat(),
-            'usuario_id': mensaje_actualizado.usuario_id,
-            'sala_id': mensaje_actualizado.sala_id
-        }
-        
-        socketio.emit("mensaje_actualizado", mensaje_dict, room=f"sala_{mensaje_actualizado.sala_id}")
-        return jsonify(mensaje_dict), 200
+            if not mensaje_actualizado:
+                return jsonify({"error": "No tienes permiso para editar este mensaje"}), 403
+                
+            # Convertir el mensaje a diccionario para la respuesta
+            mensaje_dict = {
+                'id': mensaje_actualizado.id,
+                'contenido': mensaje_actualizado.contenido,
+                'fecha_envio': mensaje_actualizado.fecha_envio.isoformat(),
+                'usuario_id': mensaje_actualizado.usuario_id,
+                'sala_id': mensaje_actualizado.sala_id
+            }
+            
+            socketio.emit("mensaje_actualizado", mensaje_dict, room=f"sala_{mensaje_actualizado.sala_id}")
+            return jsonify(mensaje_dict), 200
         
     except Exception as e:
         return jsonify({"error": str(e)}), 400
@@ -859,17 +866,18 @@ def delete_message(message_id):
         # Obtener el ID del usuario autenticado
         user_id = get_jwt_identity()
         
-        # Intentar eliminar el mensaje
-        eliminado, sala_id = MensajesService.eliminar_mensaje(
-            mensaje_id=message_id,
-            usuario_id=user_id
-        )
-        
-        if not eliminado:
-            return jsonify({"error": "No tienes permiso para eliminar este mensaje o el mensaje no existe"}), 403
+        with db.session_scope() as session:
+            # Intentar eliminar el mensaje
+            eliminado, sala_id = MensajesService.eliminar_mensaje(
+                mensaje_id=message_id,
+                usuario_id=user_id
+            )
             
-        socketio.emit("mensaje_eliminado", {"id": message_id}, room=f"sala_{sala_id}")
-        return jsonify({"mensaje": "Mensaje eliminado correctamente"}), 200
+            if not eliminado:
+                return jsonify({"error": "No tienes permiso para eliminar este mensaje o el mensaje no existe"}), 403
+                
+            socketio.emit("mensaje_eliminado", {"id": message_id}, room=f"sala_{sala_id}")
+            return jsonify({"mensaje": "Mensaje eliminado correctamente"}), 200
         
     except Exception as e:
         return jsonify({"error": str(e)}), 400
@@ -884,13 +892,51 @@ def handle_connect():
     # Sala privada
     join_room(f"user_{identidad}")
 
-    # Supongamos que cargas los grupos desde la base de datos:
-    salas = db.listar_salas(usuario_id=identidad)
-    for sala_id in salas:
-        join_room(f"sala_{sala_id}")
+    with db.session_scope() as session:
+        # Supongamos que cargas los grupos desde la base de datos:
+        salas = SalaService.listar_salas(usuario_id=identidad)
+        for sala in salas:
+            join_room(f"sala_{sala.sala_id}")
 
     print(f"Usuario {identidad} conectado y unido a sus salas.")
 
+@socketio.on("disconnect")
+def handle_disconnect():
+    token = request.args.get("token")
+    identidad = decode_token(token)["sub"]
+
+    # Sala privada
+    leave_room(f"user_{identidad}")
+
+    with db.session_scope() as session:
+        # Supongamos que cargas los grupos desde la base de datos:
+        salas = SalaService.listar_salas(usuario_id=identidad)
+        for sala in salas:
+            leave_room(f"sala_{sala.sala_id}")
+
+    print(f"Usuario {identidad} desconectado y liberado de sus salas.")
+
+@socketio.on("join_room")
+def handle_join_room(room_id):
+    join_room(f"sala_{room_id}")
+    print(f"Usuario {get_jwt_identity()} unido a la sala {room_id}")
+
+@socketio.on("leave_room")
+def handle_leave_room(room_id):
+    leave_room(f"sala_{room_id}")
+    print(f"Usuario {get_jwt_identity()} liberado de la sala {room_id}")
+
+@socketio.on("nuevo_mensaje")
+def handle_message(data):
+    print(f"Usuario {get_jwt_identity()} envio un mensaje: {data}")
+
+@socketio.on("mensaje_eliminado")
+def handle_message_deleted(data):
+    print(f"Usuario {get_jwt_identity()} elimino un mensaje: {data}")
+
+@socketio.on("mensaje_actualizado")
+def handle_message_updated(data):
+    print(f"Usuario {get_jwt_identity()} actualizo un mensaje: {data}")
 
 if __name__ == "__main__":
     # Inicializar la base de datos
