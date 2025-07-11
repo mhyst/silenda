@@ -1,0 +1,297 @@
+{% extends "base.html" %}
+
+{% block title %}Chat - Silenda Chat{% endblock %}
+
+{% block extra_css %}
+<style>
+    #chat-container {
+        display: flex;
+        height: calc(100vh - 200px);
+        border: 1px solid #ddd;
+        border-radius: 5px;
+        overflow: hidden;
+    }
+    
+    #rooms-list {
+        width: 250px;
+        border-right: 1px solid #ddd;
+        overflow-y: auto;
+        background-color: #f8f9fa;
+    }
+    
+    #chat-messages {
+        flex: 1;
+        padding: 20px;
+        overflow-y: auto;
+        background-color: #fff;
+    }
+    
+    .message {
+        margin-bottom: 15px;
+        padding: 10px 15px;
+        border-radius: 15px;
+        max-width: 70%;
+    }
+    
+    .message-sent {
+        margin-left: auto;
+        background-color: #007bff;
+        color: white;
+        border-bottom-right-radius: 0;
+    }
+    
+    .message-received {
+        margin-right: auto;
+        background-color: #e9ecef;
+        border-bottom-left-radius: 0;
+    }
+    
+    .message-header {
+        font-weight: bold;
+        margin-bottom: 5px;
+        font-size: 0.9em;
+    }
+    
+    .message-time {
+        font-size: 0.7em;
+        opacity: 0.7;
+        text-align: right;
+    }
+    
+    #message-form {
+        margin-top: 20px;
+    }
+    
+    .room {
+        padding: 10px 15px;
+        cursor: pointer;
+        border-bottom: 1px solid #eee;
+    }
+    
+    .room:hover {
+        background-color: #e9ecef;
+    }
+    
+    .room.active {
+        background-color: #e9ecef;
+        font-weight: bold;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<h2 class="mb-4">Chat</h2>
+
+<div id="chat-container">
+    <!-- Lista de salas -->
+    <div id="rooms-list">
+        <div class="p-3 border-bottom">
+            <h5>Salas</h5>
+        </div>
+        <div id="rooms">
+                {% if rooms %}
+                {% for room in rooms %}
+                <div class="room" data-room-id="{{ room.id }}">
+                    <div class="room-name">
+                        <i class="bi bi-chat-dots"></i>
+                        {{ room.nombre }}
+                        {% if room.privada %}
+                            <span class="badge bg-secondary">Privada</span>
+                        {% else %}
+                            <span class="badge bg-primary">Pública</span>
+                        {% endif %}
+                    </div>
+                    <div class="room-meta">
+                        <small class="text-muted">Creada el {{ room.fecha_creado|datetimeformat('%d/%m/%Y') }}</small>
+                    </div>
+                </div>
+                {% endfor %}
+            {% else %}
+                <div class="p-3 text-center text-muted">
+                    No hay salas disponibles. ¡Crea una nueva!
+                </div>
+            {% endif %}
+        </div>
+    </div>
+    
+    <!-- Área de mensajes -->
+    <div id="chat-area" class="d-flex flex-column" style="flex: 1;">
+        <div id="chat-messages">
+            <!-- Los mensajes se cargarán aquí dinámicamente -->
+            <div class="text-center text-muted mt-5">
+                Selecciona una sala para comenzar a chatear
+            </div>
+        </div>
+        
+        <!-- Formulario de envío de mensajes -->
+        <div class="p-3 border-top">
+            <form id="message-form" class="d-flex" style="display: none;">
+                <input type="text" id="message-input" class="form-control me-2" placeholder="Escribe un mensaje..." autocomplete="off">
+                <button type="submit" class="btn btn-primary">Enviar</button>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // Pasar variables de la sesión a JavaScript
+    const userData = {
+        userId: '{{ session.get("user_id", "")|tojson|safe }}',
+        accessToken: '{{ session.get("access_token", "")|tojson|safe }}'
+    };
+    
+    document.addEventListener('DOMContentLoaded', function() {
+        console.log('Chat cargado');
+        
+        // Elementos del DOM
+        const roomsList = document.getElementById('rooms');
+        const chatMessages = document.getElementById('chat-messages');
+        const messageForm = document.getElementById('message-form');
+        const messageInput = document.getElementById('message-input');
+        
+        // Variables de estado
+        let currentRoomId = null;
+        
+        // Función para formatear fechas
+        function formatDate(dateString) {
+            const options = { 
+                year: 'numeric', 
+                month: '2-digit', 
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit'
+            };
+            return new Date(dateString).toLocaleString('es-ES', options);
+        }
+        
+        // Manejar clic en una sala
+        function handleRoomClick(roomElement) {
+            // Remover clase activa de todas las salas
+            document.querySelectorAll('.room').forEach(room => {
+                room.classList.remove('active');
+            });
+            
+            // Añadir clase activa a la sala seleccionada
+            roomElement.classList.add('active');
+            
+            // Actualizar la sala actual
+            currentRoomId = roomElement.dataset.roomId;
+            const roomName = roomElement.querySelector('.room-name').textContent.trim();
+            
+            // Mostrar el formulario de mensajes
+            messageForm.style.display = 'flex';
+            
+            // Cargar mensajes de la sala
+            loadRoomMessages(currentRoomId);
+        }
+        
+        // Cargar mensajes de una sala
+        async function loadRoomMessages(roomId) {
+            try {
+                const response = await fetch(`/api/rooms/${roomId}/messages`, {
+                    headers: {
+                        'Authorization': 'Bearer ' + userData.accessToken,
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                if (response.ok) {
+                    const messages = await response.json();
+                    displayMessages(messages);
+                } else {
+                    console.error('Error al cargar los mensajes');
+                }
+            } catch (error) {
+                console.error('Error:', error);
+            }
+        }
+        
+        // Mostrar mensajes en el chat
+        function displayMessages(messages) {
+            chatMessages.innerHTML = '';
+            
+            if (messages.length === 0) {
+                const noMessages = document.createElement('div');
+                noMessages.className = 'text-center text-muted mt-5';
+                noMessages.textContent = 'No hay mensajes en esta sala. ¡Sé el primero en escribir!';
+                chatMessages.appendChild(noMessages);
+                return;
+            }
+            
+            messages.forEach(message => {
+                const messageElement = document.createElement('div');
+                // Verificar si el mensaje es del usuario actual
+                const isCurrentUser = message.usuario_id && 
+                                    message.usuario_id.toString() === userData.userId;
+                messageElement.className = 'message ' + (isCurrentUser ? 'message-sent' : 'message-received');
+                
+                messageElement.innerHTML = `
+                    <div class="message-header">
+                        ${message.usuario_nombre}
+                        <span class="message-time">${formatDate(message.fecha_envio)}</span>
+                    </div>
+                    <div class="message-content">${message.contenido}</div>
+                `;
+                
+                chatMessages.appendChild(messageElement);
+            });
+            
+            // Hacer scroll al final de los mensajes
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+        
+        // Manejar envío de mensajes
+        messageForm.addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            if (!currentRoomId || !messageInput.value.trim()) return;
+            
+            try {
+                const response = await fetch(`/api/rooms/${currentRoomId}/messages`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': 'Bearer ' + userData.accessToken,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        contenido: messageInput.value.trim()
+                    })
+                });
+                
+                if (response.ok) {
+                    // Limpiar el input
+                    messageInput.value = '';
+                    
+                    // Recargar mensajes
+                    loadRoomMessages(currentRoomId);
+                } else {
+                    console.error('Error al enviar el mensaje');
+                }
+            } catch (error) {
+                console.error('Error:', error);
+            }
+        });
+        
+        // Agregar manejadores de eventos a las salas
+        // Agregar manejadores de eventos a las salas
+        const roomElements = document.querySelectorAll('.room');
+        roomElements.forEach(function(room) {
+            room.addEventListener('click', function() {
+                handleRoomClick(room);
+            });
+        });
+        
+        // Si hay una sala en la URL, seleccionarla automáticamente
+        const urlParams = new URLSearchParams(window.location.search);
+        const roomId = urlParams.get('room');
+        if (roomId) {
+            const roomElement = document.querySelector('.room[data-room-id="' + roomId + '"]');
+            if (roomElement) {
+                handleRoomClick(roomElement);
+            }
+        }
+    });
+</script>
+{% endblock %}
