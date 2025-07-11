@@ -19,7 +19,7 @@
 - **Body**:
   ```json
   {
-    "email": "usuario@ejemplo.com",
+    "username": "usuario",
     "password": "contraseña123"
   }
   ```

@@ -23,7 +23,13 @@ from services.salas import SalaService
 app = Flask(__name__)
 #CORS(app, origins=["https://192.168.1.10:11443"])
 #CORS(app, origins=["https://192.168.1.64"], supports_credentials=True)
-CORS(app, origins="*")
+#CORS(app, origins="*")
+#CORS(app,
+#        origins=["https://192.168.1.64:11443","https://90.175.164.116:11443","https://93.176.176.101:11443"],
+#     allow_headers=["Content-Type", "Authorization"],
+#     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+#     supports_credentials=False)
+CORS(app, supports_credentials=False)
 
 # Inicializa SocketIO con la app Flask
 socketio = SocketIO(app, cors_allowed_origins="*")
@@ -34,6 +40,16 @@ app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=1)  # El token expira e
 
 # Inicializar JWT
 jwt = JWTManager(app)
+
+TRUSTED_IPS = ["192.168.1.64", "93.176.176.101", "90.175.164.116"]
+
+#CORS FIX
+@app.after_request
+def add_cors_headers(response):
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+    return response
 
 # Ruta de autenticación
 @app.route("/api/auth/login", methods=["POST"])
@@ -945,9 +961,10 @@ if __name__ == "__main__":
     # Ejecutar la aplicación
     socketio.run(
         app,
-        ssl_context=("localhost+3.pem", "localhost+3-key.pem"),
+        ssl_context=("192.168.1.10+1.pem", "192.168.1.10+1-key.pem"),
         host="0.0.0.0",
         port=11443,
-        debug=True
+        debug=True,
+        allow_unsafe_werkzeug=True
     )
 

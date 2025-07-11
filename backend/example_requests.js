@@ -13,11 +13,11 @@ fetch("https://192.168.1.10:11443/api/auth/login", {
 
 # Recabar datos del usuario conectado
 
-fetch("https://192.168.1.10:11443/api/user/me", {
+fetch("https://90.175.164.116:11443/api/user/me", {
   method: "GET",
   headers: {
     "Content-Type": "application/json",
-    "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJmcmVzaCI6ZmFsc2UsImlhdCI6MTc1MTk4ODQ2OCwianRpIjoiY2EwZWMzNzUtMTEwNS00ZjQzLTk1YzMtNzA4ZDBhM2U3MDNhIiwidHlwZSI6ImFjY2VzcyIsInN1YiI6IjIiLCJuYmYiOjE3NTE5ODg0NjgsImNzcmYiOiJhMzliYzdlZC1iYjY3LTRkNjEtYjhlMC0zNTM1YTA5NjBiYjMiLCJleHAiOjE3NTE5OTIwNjgsInVzZXJuYW1lIjoibWh5c3QiLCJyb2xlIjoidXNlciJ9.lQ8av5fLa1ZA6Nzr9TC26q3h_CFMirMmJaT6H0JBM-Y
+    "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJmcmVzaCI6ZmFsc2UsImlhdCI6MTc1MjE5OTk2MywianRpIjoiMjk2MjYzODMtYjM1MC00ZDdiLTk5NzAtYWQ2ZmExYTNiZDQ4IiwidHlwZSI6ImFjY2VzcyIsInN1YiI6IjEiLCJuYmYiOjE3NTIxOTk5NjMsImNzcmYiOiI1MTAxN2YyYS04OTgzLTQxNDctYjg4Yi1hNjZjZTQ0NGEyZjIiLCJleHAiOjE3NTIyMDM1NjMsInVzZXJuYW1lIjoiSnVhbmVsbyIsInJvbGUiOiJ1c2VyIn0.kE3xUonpnXDmkwRfeAMXo8ftIniUgwhhZyHtnqnD8hw
   }
 })
   .then(res => res.json())
